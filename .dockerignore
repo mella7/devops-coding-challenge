@@ -1,0 +1,8 @@
+target/
+.git/
+.idea/
+*.iml
+helm/
+terraform/
+.github/
+*.md
