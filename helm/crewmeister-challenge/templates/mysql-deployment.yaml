@@ -1,4 +1,4 @@
-# runs MySQL for local/dev use - deployment + service, no persistence
+# runs MySQL for local/dev use, backed by a PersistentVolumeClaim
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,3 +26,10 @@ spec:
               value: {{ .Values.mysql.database | quote }}
           ports:
             - containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-mysql-data
