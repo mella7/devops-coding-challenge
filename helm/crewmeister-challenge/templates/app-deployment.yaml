@@ -1,0 +1,70 @@
+# runs the app container - image, env vars, resources, probes, security context
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-app
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-app
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-app
+    spec:
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # application.yml defaults this to localhost, which is wrong in a pod -
+            # this points the app's connection pool at the real MySQL Service instead
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://{{ .Release.Name }}-mysql:3306/{{ .Values.mysql.database }}"
+            # same fix, but for Flyway's own separate config (spring.flyway.url), which
+            # also defaults to localhost and would fail migrations without this override
+            - name: SPRING_DATASOURCE_WRITER_URL
+              value: "jdbc:mysql://{{ .Release.Name }}-mysql:3306/{{ .Values.mysql.database }}"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: root
+            # pulled from the Secret instead of a plain value, unlike the vars above
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-db
+                  key: MYSQL_ROOT_PASSWORD
+          ports:
+            - containerPort: 8080
+          # dumps the resources block from values.yaml as-is, indented to fit here
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: {{ .Values.securityContext.allowPrivilegeEscalation }}
+            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
+            # same toYaml trick, just for the capabilities list
+            capabilities:
+              {{- toYaml .Values.securityContext.capabilities | nindent 14 }}
+          # needed because readOnlyRootFilesystem above blocks writes everywhere else
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+      # the other half of the /tmp mount above - empty, wiped on pod restart
+      volumes:
+        - name: tmp
+          emptyDir: {}

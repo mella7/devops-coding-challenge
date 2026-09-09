@@ -1,0 +1,10 @@
+# exposes the mysql pod inside the cluster on a stable DNS name
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-mysql
+spec:
+  selector:
+    app: {{ .Release.Name }}-mysql
+  ports:
+    - port: 3306

@@ -1,0 +1,7 @@
+# chart metadata - name/version Helm uses to identify and package this chart
+apiVersion: v2
+name: crewmeister-challenge
+description: Helm chart for the Crewmeister DevOps challenge
+type: application
+version: 0.1.0
+appVersion: "0.0.1"

@@ -1,0 +1,41 @@
+# default config values, referenced by the templates via {{ .Values.x }}
+
+image:
+  repository: crewmeister-challenge
+  tag: local
+  pullPolicy: Never   # local kind only - switch to IfNotPresent once pulling from a registry
+
+replicaCount: 1
+
+service:
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+probes:
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 15
+    periodSeconds: 5
+
+mysql:
+  database: challenge
+  # rootPassword intentionally not here - comes from a Secret, see templates/secret.yaml
