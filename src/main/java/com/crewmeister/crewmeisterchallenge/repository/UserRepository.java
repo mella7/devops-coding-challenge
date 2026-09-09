@@ -1,11 +1,11 @@
 package com.crewmeister.crewmeisterchallenge.repository;
 
 import com.crewmeister.crewmeisterchallenge.model.User;
-import org.springframework.data.repository.Repository;
+import java.util.Optional;
+import org.springframework.data.repository.CrudRepository;
 
-//create user repository
-public interface UserRepository extends Repository<User, Long> {
-  User save(User user);
+public interface UserRepository extends CrudRepository<User, Long> {
 
-  User findById(Long id);
+  @Override
+  Optional<User> findById(Long id);
 }
