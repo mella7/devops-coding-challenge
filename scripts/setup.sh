@@ -25,4 +25,3 @@ helm upgrade --install crewmeister ./helm/crewmeister-challenge --wait --timeout
 
 log "Done. Try:"
 echo "  kubectl port-forward svc/crewmeister-app 8080:8080"
-EOF
