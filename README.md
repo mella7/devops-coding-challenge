@@ -1,83 +1,86 @@
-**A real CVE, actually root-caused, not just patched over:** Trivy flagged
-`jackson-databind` as vulnerable across three separate Spring Boot version
-bumps. The real cause was a hardcoded `<version>2.15.0</version>` on the
-dependency, silently overriding Spring Boot's own dependency management on
-every attempt to fix it. Removing the pin and letting Spring Boot's BOM (plus
-a few targeted property overrides — `tomcat.version`, `spring-framework.version`,
-etc. — for patches Spring Boot's own release hadn't caught up to yet)
-resolved it. See `pom.xml` and the commit history.
+# Crewmeister DevOps Challenge
 
+A small Spring Boot user-management API, taken from a bare, three-endpoint
+starting point to a fully containerized, security-scanned, Kubernetes-native
+deployment — built, tested, and shipped entirely through automation, and
+runnable end-to-end on a laptop with a single command.
 
-## Quickstart
+![CI](https://github.com/mella7/devops-coding-challenge/actions/workflows/ci.yml/badge.svg)
 
-Prerequisites: Docker, kind, Terraform, Helm, kubectl (or run
-`./scripts/install-tools.sh`, which detects your OS and installs anything
-missing).
+## What's actually in here
 
-```bash
-./scripts/setup.sh
+- A **Docker image** that's multi-stage, runs as a non-root numeric UID,
+  caches dependency layers separately from source changes, and ships a
+  container-level healthcheck.
+- A **Helm chart** deploying the app and MySQL as independent
+  Deployment/Service pairs, with:
+  - Credentials pulled from a Kubernetes `Secret`, never hardcoded in values
+  - A `PersistentVolumeClaim` so MySQL data survives pod restarts
+  - CPU/memory resource requests and limits
+  - A hardened pod `securityContext` — non-root, `readOnlyRootFilesystem`,
+    all Linux capabilities dropped, `allowPrivilegeEscalation: false`
+  - Liveness and readiness probes wired to Spring Actuator's health groups
+  - `NetworkPolicy` objects restricting the app to only reach MySQL on 3306
+    (plus DNS), and MySQL to only accept connections from the app
+- **Terraform** provisioning a local `kind` (Kubernetes-in-Docker) cluster —
+  free, requires no cloud account, and structured so the same Helm chart
+  would deploy unmodified against a real cluster.
+- A **GitHub Actions pipeline** that on every push: spins up a real MySQL
+  service container and runs the full test suite against it, builds the
+  Docker image, scans it with Trivy, generates a CycloneDX software bill of
+  materials via syft, and pushes the image to GitHub Container Registry.
+- **Prometheus + Grafana** (via `kube-prometheus-stack`), scraping the app's
+  existing `/actuator/prometheus` endpoint, with resource limits specifically
+  tuned down from the chart's cloud-scale defaults so it runs cleanly
+  alongside everything else on a single laptop.
+- A **one-command setup script** (`scripts/setup.sh`) that brings the entire
+  stack up from a completely fresh clone — no manual steps, no assumed
+  state — and a companion `install-tools.sh` that detects the host OS and
+  installs whatever's missing (Docker, kind, kubectl, Helm, Terraform).
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Git["GitHub"]
+        Repo[Source + Helm chart]
+        Actions[GitHub Actions]
+    end
+
+    Repo --> Actions
+    Actions -->|test against real MySQL| Actions
+    Actions -->|build, Trivy scan, SBOM| Actions
+    Actions -->|push| GHCR[(GHCR)]
+
+    subgraph TF["Terraform"]
+        Cluster[kind cluster]
+    end
+
+    TF --> K8s
+
+    subgraph K8s["Kubernetes (kind)"]
+        App[crewmeister-app] --> MySQL[(MySQL + PVC)]
+        NetPol[NetworkPolicies] -.restricts.-> App
+        NetPol -.restricts.-> MySQL
+        Prom[Prometheus] -->|scrapes /actuator/prometheus| App
+        Graf[Grafana] --> Prom
+    end
+
+    GHCR -.->|pullable by| K8s
 ```
 
-This builds the image, provisions the kind cluster via Terraform, loads the
-image into the cluster, installs the app via Helm, and installs
-Prometheus + Grafana. Takes several minutes on first run.
+## The bug that was actually there
 
-```bash
-kubectl port-forward svc/crewmeister-app 8080:8080
-curl -s -X POST localhost:8080/user -H 'Content-Type: application/json' -d '{"name":"Ada"}'
-curl -s "localhost:8080/user?id=1"
+The original `GET /user?id=<id>` endpoint called `userRepository.findById(id)`,
+which returned a bare `User` — not an `Optional<User>` — and immediately
+called `.getName()` on it. For any ID not in the database, that's a
+`NullPointerException` surfaced to the caller as a raw 500 with a stack
+trace. The original `POST /user` had a matching issue: it parsed the request
+body manually with a raw `ObjectMapper` and swallowed exceptions into a
+plain-text "Error parsing JSON" response instead of a real HTTP status.
 
-kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
-# open http://localhost:3000, login admin/admin
-```
-
-Prefer plain Docker for a quick app+DB loop without Kubernetes at all:
-`docker compose up --build`.
-
-Tear down: `cd terraform && terraform destroy`.
-
-## Design decisions & trade-offs
-
-- **kind over a managed cloud cluster** — free, zero setup, matches the
-  challenge's "runs locally" requirement. The Helm chart itself has no
-  kind-specific dependency; pointed at a real cluster with an image in a
-  reachable registry, it deploys unmodified.
-- **Terraform owns the cluster, not the app release** — `helm_release` via
-  Terraform creates a chicken-and-egg problem locally: the image can't be
-  loaded into `kind` until the cluster exists, but Terraform's `helm_release`
-  tries to install (and wait on) the app in the same `apply`. Splitting
-  cluster-provisioning (Terraform) from app-install (plain Helm, in
-  `scripts/setup.sh`, after the image load) avoids the race entirely. This
-  only matters for the registry-free local path — once pushed to GHCR, this
-  constraint goes away.
-- **Trivy runs on every build but doesn't fail the pipeline** (`exit-code: 0`).
-  Chosen deliberately: several flagged CVEs require a Spring Boot 4.0
-  migration (Spring Boot 3.5 itself reached open-source EOL 2026-06-30; the
-  full fix is an 80+ breaking-change upgrade, out of proportion for this
-  project). Findings are visible in every CI run rather than silently
-  ignored or blocking unrelated work.
-- **NetworkPolicies are defined but not enforced locally** — kind's default
-  CNI (kindnet) accepts `NetworkPolicy` objects but doesn't act on them. The
-  policies are written and applied regardless, since they're portable,
-  standard Kubernetes objects that work unmodified on any NetworkPolicy-
-  enforcing CNI (Calico, Cilium, most managed cloud clusters).
-- **Monitoring resource requests are tuned down from kube-prometheus-stack's
-  defaults** — the chart assumes real cluster headroom; on a laptop running
-  the whole stack simultaneously, default CPU limits on Grafana specifically
-  caused severe throttling (plugin loading took 2+ minutes instead of
-  seconds), triggering probe failures and restart loops. Fixed by dropping
-  the CPU limit and raising probe `initialDelaySeconds`. See
-  `monitoring/values-local.yaml`.
-
-## What I'd add next
-
-- ArgoCD for GitOps-driven deploys instead of imperative `helm upgrade`
-- External Secrets Operator + a real secret backend (AWS Secrets Manager),
-  replacing the plain Kubernetes `Secret` used for local dev
-- A live AWS demo (k3s-on-EC2 or EKS) — the Terraform/Helm split here is
-  structured so this is a values/variables change, not a rewrite
-- OIDC-based GitHub Actions → AWS auth instead of static credentials, for
-  whenever the AWS leg is added
-- A committed Grafana dashboard JSON instead of the stack's defaults
-
-## Repository layout
+Both were fixed properly rather than patched around: `UserRepository` now
+extends `CrudRepository` and returns `Optional<User>`; the controller uses
+that `Optional` to return a real `404` with a message, and `POST` now takes
+a typed `record` request body that Spring deserializes automatically instead
+of a hand-rolled parser.
