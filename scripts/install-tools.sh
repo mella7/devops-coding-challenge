@@ -153,6 +153,37 @@ else
   fi
 fi
 
+# ---- trivy -----------------------------------------------------------
+if have trivy; then
+  log "trivy already installed: $(trivy --version | head -1)"
+else
+  log "Installing trivy"
+  case "$PKG" in
+    dnf)
+      sudo dnf install -y trivy 2>/dev/null || {
+        cat <<REPO | sudo tee /etc/yum.repos.d/trivy.repo >/dev/null
+[trivy]
+name=Trivy repository
+baseurl=https://aquasecurity.github.io/trivy-repo/rpm/releases/\$releasever/\$basearch/
+gpgcheck=1
+enabled=1
+gpgkey=https://aquasecurity.github.io/trivy-repo/rpm/public.key
+REPO
+        sudo dnf install -y trivy
+      }
+      ;;
+    apt)
+      sudo apt-get install -y wget apt-transport-https gnupg
+      wget -qO- https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+      echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | \
+        sudo tee /etc/apt/sources.list.d/trivy.list
+      sudo apt-get update && sudo apt-get install -y trivy
+      ;;
+    pacman) sudo pacman -Sy --noconfirm trivy ;;
+    brew) brew install trivy ;;
+  esac
+fi
+
 log "All tools ready:"
 docker --version
 docker compose version
