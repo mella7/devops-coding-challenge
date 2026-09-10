@@ -1,0 +1,31 @@
+# restricts app pod traffic. Requires a CNI that enforces NetworkPolicy
+# (Calico, Cilium, most managed cloud CNIs) - kind's default CNI (kindnet)
+# accepts this object but does not enforce it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-app-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-app
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {} # allow inbound from anywhere on the cluster - tighten if you add an ingress controller
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-mysql
+      ports:
+        - protocol: TCP
+          port: 3306
+    - to: # allow DNS, otherwise the app can't resolve the mysql service name at all
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
