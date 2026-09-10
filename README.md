@@ -110,32 +110,6 @@ real registry push, a different Kubernetes target, a GitOps controller
 managing the Helm release instead of a script — is a change to one layer,
 not a rewrite of the whole thing.
 
-## A CVE that three version bumps didn't fix — and why
-
-Trivy's scan gate kept flagging `jackson-databind` as vulnerable, no matter
-how many times the Spring Boot version was bumped — first to `3.3.11`, then
-to `3.5.14`, each time expecting the CVE to disappear along with everything
-else it fixed. It didn't. The reason turned out to have nothing to do with
-Spring Boot's own release cadence: `pom.xml` had a leftover, explicit
-`<version>2.15.0</version>` pinned directly on the `jackson-databind`
-dependency, silently overriding whatever version Spring Boot's own dependency
-management BOM was trying to supply. No amount of parent-version bumping was
-ever going to touch it.
-
-The actual fix was two-fold: removing that hardcoded pin so Spring Boot's BOM
-controls the version, and adding a small set of targeted property overrides
-(`tomcat.version`, `spring-framework.version`, `spring-data-bom.version`,
-`micrometer.version`, `jackson-bom.version`) in `pom.xml` for the handful of
-libraries where Spring Boot's own latest patch release hadn't yet caught up
-to an already-published upstream fix. That combination took the image from
-32 HIGH/CRITICAL findings down to a small number that genuinely require a
-Spring Boot 4.0 migration — an 80-plus breaking-change upgrade that Spring's
-own community guidance estimates at 200-500 engineering hours, and which
-Spring Boot 3.5 itself only just aged out of support for (open-source EOL:
-June 30, 2026). Trivy's scan step is deliberately left non-blocking
-(`exit-code: 0`) so those remaining, documented findings stay visible on
-every build without holding up unrelated work.
-
 ## NetworkPolicies that exist, and are honest about not doing anything locally
 
 `NetworkPolicy` is a standard Kubernetes object, but it's only as good as
