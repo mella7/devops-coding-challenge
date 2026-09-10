@@ -1,68 +1,83 @@
-# Crewmeister Challenge
+**A real CVE, actually root-caused, not just patched over:** Trivy flagged
+`jackson-databind` as vulnerable across three separate Spring Boot version
+bumps. The real cause was a hardcoded `<version>2.15.0</version>` on the
+dependency, silently overriding Spring Boot's own dependency management on
+every attempt to fix it. Removing the pin and letting Spring Boot's BOM (plus
+a few targeted property overrides — `tomcat.version`, `spring-framework.version`,
+etc. — for patches Spring Boot's own release hadn't caught up to yet)
+resolved it. See `pom.xml` and the commit history.
 
-## Background
 
-At Crewmeister, our development team is continuously growing. We aim to hire the best educated, motivated, and enthusiastic people in the field who have fun building up Crewmeister in our vision to empower small businesses to thrive in a digital world. For this quest, we are continuously getting new applicants from all over the world. To filter which candidates could be a good fit, we provide our candidates with a coding challenge that we manually review and evaluate.
+## Quickstart
 
----
+Prerequisites: Docker, kind, Terraform, Helm, kubectl (or run
+`./scripts/install-tools.sh`, which detects your OS and installs anything
+missing).
 
-## DevOps Engineer Task
+```bash
+./scripts/setup.sh
+```
 
-As a DevOps Engineer at Crewmeister, you will be in charge of several challenging tasks in your daily work. One of your core responsibilities will be to ensure that the system is always running smoothly and that the application is deployed successfully to our customers.
+This builds the image, provisions the kind cluster via Terraform, loads the
+image into the cluster, installs the app via Helm, and installs
+Prometheus + Grafana. Takes several minutes on first run.
 
-In this challenge, you should use DevOps best practices to architect and implement the complete cycle of building, packaging, and deploying a Java application (specified later in this document). 
+```bash
+kubectl port-forward svc/crewmeister-app 8080:8080
+curl -s -X POST localhost:8080/user -H 'Content-Type: application/json' -d '{"name":"Ada"}'
+curl -s "localhost:8080/user?id=1"
 
-The following are core technologies/tools that should be present in the solution:
+kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
+# open http://localhost:3000, login admin/admin
+```
 
-- Dockerfile
-- Helm Chart
-- Terraform to interact with the Kubernetes cluster
+Prefer plain Docker for a quick app+DB loop without Kubernetes at all:
+`docker compose up --build`.
 
-You have the flexibility to utilize any cloud provider of your choice to deploy and run the application effectively. Additionally, it should be designed to operate seamlessly on local machines, allowing for a versatile setup that caters to various operational preferences and environments.
+Tear down: `cd terraform && terraform destroy`.
 
-## Plus:
+## Design decisions & trade-offs
 
-- Create a CI Pipeline in Github to automate the application lifecycle
+- **kind over a managed cloud cluster** — free, zero setup, matches the
+  challenge's "runs locally" requirement. The Helm chart itself has no
+  kind-specific dependency; pointed at a real cluster with an image in a
+  reachable registry, it deploys unmodified.
+- **Terraform owns the cluster, not the app release** — `helm_release` via
+  Terraform creates a chicken-and-egg problem locally: the image can't be
+  loaded into `kind` until the cluster exists, but Terraform's `helm_release`
+  tries to install (and wait on) the app in the same `apply`. Splitting
+  cluster-provisioning (Terraform) from app-install (plain Helm, in
+  `scripts/setup.sh`, after the image load) avoids the race entirely. This
+  only matters for the registry-free local path — once pushed to GHCR, this
+  constraint goes away.
+- **Trivy runs on every build but doesn't fail the pipeline** (`exit-code: 0`).
+  Chosen deliberately: several flagged CVEs require a Spring Boot 4.0
+  migration (Spring Boot 3.5 itself reached open-source EOL 2026-06-30; the
+  full fix is an 80+ breaking-change upgrade, out of proportion for this
+  project). Findings are visible in every CI run rather than silently
+  ignored or blocking unrelated work.
+- **NetworkPolicies are defined but not enforced locally** — kind's default
+  CNI (kindnet) accepts `NetworkPolicy` objects but doesn't act on them. The
+  policies are written and applied regardless, since they're portable,
+  standard Kubernetes objects that work unmodified on any NetworkPolicy-
+  enforcing CNI (Calico, Cilium, most managed cloud clusters).
+- **Monitoring resource requests are tuned down from kube-prometheus-stack's
+  defaults** — the chart assumes real cluster headroom; on a laptop running
+  the whole stack simultaneously, default CPU limits on Grafana specifically
+  caused severe throttling (plugin loading took 2+ minutes instead of
+  seconds), triggering probe failures and restart loops. Fixed by dropping
+  the CPU limit and raising probe `initialDelaySeconds`. See
+  `monitoring/values-local.yaml`.
 
-- Add monitoring tools to check the health of the application
+## What I'd add next
 
-## Important Points:
+- ArgoCD for GitOps-driven deploys instead of imperative `helm upgrade`
+- External Secrets Operator + a real secret backend (AWS Secrets Manager),
+  replacing the plain Kubernetes `Secret` used for local dev
+- A live AWS demo (k3s-on-EC2 or EKS) — the Terraform/Helm split here is
+  structured so this is a values/variables change, not a rewrite
+- OIDC-based GitHub Actions → AWS auth instead of static credentials, for
+  whenever the AWS leg is added
+- A committed Grafana dashboard JSON instead of the stack's defaults
 
-- At Crewmeister, we value creativity and pushing for better. You are encouraged to expand the solution as you find fit. To do so, you must ensure high-quality documentation and that the base solution is correctly executed.
-- All the tools used must be publicly accessible or explicitly documented on how to authenticate.
-- All the tools must be free to use.
-
- ## Submission:
-- Provide the link to your GitHub repository in the Greenhouse submission form.
-- Submit your completed project via the Greenhouse link in the email received from the Recruitment Manager.
-
-## Challenge Application
-
-A Spring Boot application that provides a simple user management REST API.
-
-### Technologies Used
-
-- Java 17
-- Spring Boot 3.3.5
-- MySQL Database
-- Flyway Migration
-- Maven
-- Spring Data JPA
-- Spring Actuator
-
-### Pre-requisites
-
-- JDK 17
-- MySQL
-- Maven
-
-### API Endpoints
-
-#### GET /user
-
-Retrieves a user by ID
-
-#### POST /user
-
-Creates a new user
-
+## Repository layout
