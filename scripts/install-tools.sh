@@ -122,9 +122,41 @@ else
   fi
 fi
 
+# ---- terraform -----------------------------------------------------------
+if have terraform; then
+  log "terraform already installed: $(terraform version | head -1)"
+else
+  log "Installing terraform"
+  case "$PKG" in
+    dnf)
+      sudo dnf config-manager addrepo --from-repofile=https://rpm.releases.hashicorp.com/fedora/hashicorp.repo 2>/dev/null || true
+      sudo dnf install -y terraform 2>/dev/null || true
+      ;;
+    apt)
+      sudo apt-get install -y gnupg software-properties-common
+      wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+        sudo tee /etc/apt/sources.list.d/hashicorp.list
+      sudo apt-get update && sudo apt-get install -y terraform
+      ;;
+    pacman) sudo pacman -Sy --noconfirm terraform ;;
+    brew) brew tap hashicorp/tap && brew install hashicorp/tap/terraform ;;
+  esac
+
+  if ! have terraform; then
+    log "Repo install failed, falling back to direct binary download"
+    TF_VERSION="1.9.8"
+    curl -Lo /tmp/terraform.zip \
+      "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_$([ "$OS" = Darwin ] && echo darwin || echo linux)_${ARCH}.zip"
+    unzip -o /tmp/terraform.zip -d /tmp
+    sudo mv /tmp/terraform /usr/local/bin/terraform
+  fi
+fi
+
 log "All tools ready:"
 docker --version
 docker compose version
 kubectl version --client --short 2>/dev/null || kubectl version --client
 kind --version
 helm version --short
+terraform version
