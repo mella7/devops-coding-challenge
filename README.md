@@ -1,10 +1,17 @@
 # Crewmeister DevOps Challenge
 
 A small Spring Boot user-management API, taken from a bare, three-endpoint
-starting point to a fully containerized, security-scanned, Kubernetes-native deployment - built, tested, and shipped entirely through automation, and runnable end-to-end on a laptop with a single command.
+starting point to a fully containerized, security-scanned, Kubernetes-native
+deployment — built, tested, and shipped entirely through automation, and
+runnable end-to-end on a laptop with a single command.
 
 **A note on approach:** the base solution was built to run entirely on
-`kind`, so it costs nothing and needs no cloud account to review. On top of that, it was also deployed to a real AWS EKS cluster on my own free-tier account, purely to show I can operate this outside a local sandbox - which meant working directly with IAM, EKS's own version lifecycle, and IRSA, not just running `terraform apply` once and calling it done. The EKS control plane and its NAT gateway aren't free to run, so that path is spun up to
+`kind`, so it costs nothing and needs no cloud account to review. On top of
+that, it was also deployed to a real AWS EKS cluster on my own free-tier
+account, purely to show I can operate this outside a local sandbox - which
+meant working directly with IAM, EKS's own version lifecycle, and IRSA, not
+just running `terraform apply` once and calling it done. The EKS control
+plane and its NAT gateway aren't free to run, so that path is spun up to
 verify, screenshotted, and torn down immediately after - see
 [Running this on AWS](#running-this-on-aws) for the full account, including
 what went wrong along the way.
@@ -13,22 +20,33 @@ what went wrong along the way.
 
 ## What's actually in here
 
-- A **Docker image** that's multi-stage, runs as a non-root numeric UID, caches dependency layers separately from source changes, and ships a container-level healthcheck.
+- A **Docker image** that's multi-stage, runs as a non-root numeric UID,
+  caches dependency layers separately from source changes, and ships a
+  container-level healthcheck.
 - A **Helm chart** deploying the app and MySQL as independent
   Deployment/Service pairs, with:
   - Credentials pulled from a Kubernetes `Secret`, never hardcoded in values
   - A `PersistentVolumeClaim` so MySQL data survives pod restarts
   - CPU/memory resource requests and limits
-  - A hardened pod `securityContext` - non-root, `readOnlyRootFilesystem`,
+  - A hardened pod `securityContext` — non-root, `readOnlyRootFilesystem`,
     all Linux capabilities dropped, `allowPrivilegeEscalation: false`
   - Liveness and readiness probes wired to Spring Actuator's health groups
-  - `NetworkPolicy` objects restricting the app to only reach MySQL on 3306    (plus DNS), and MySQL to only accept connections from the app
+  - `NetworkPolicy` objects restricting the app to only reach MySQL on 3306
+    (plus DNS), and MySQL to only accept connections from the app
 - **Terraform** provisioning either a local `kind` (Kubernetes-in-Docker)
-  cluster or a real AWS EKS cluster, from the same values-driven Helm chart with no target-specific templates.
-- A **GitHub Actions pipeline** that on every push: spins up a real MySQL  service container and runs the full test suite against it, builds the Docker image, scans it with Trivy, generates a CycloneDX software bill of materials via syft, and pushes the image to GitHub Container Registry.
-- **Prometheus + Grafana** (via `kube-prometheus-stack`), scraping the app's  existing `/actuator/prometheus` endpoint, with resource limits tuned down from the chart's cloud-scale defaults so it runs cleanly on a laptop.
-- A **one-command setup script** (`scripts/setup.sh`) that brings the entire  stack up from a completely fresh clone, and a companion
-  `install-tools.sh` that detects the host OS and installs whatever's  missing (Docker, kind, kubectl, Helm, Terraform).
+  cluster or a real AWS EKS cluster, from the same values-driven Helm chart
+  with no target-specific templates.
+- A **GitHub Actions pipeline** that on every push: spins up a real MySQL
+  service container and runs the full test suite against it, builds the
+  Docker image, scans it with Trivy, generates a CycloneDX software bill of
+  materials via syft, and pushes the image to GitHub Container Registry.
+- **Prometheus + Grafana** (via `kube-prometheus-stack`), scraping the app's
+  existing `/actuator/prometheus` endpoint, with resource limits tuned down
+  from the chart's cloud-scale defaults so it runs cleanly on a laptop.
+- A **one-command setup script** (`scripts/setup.sh`) that brings the entire
+  stack up from a completely fresh clone, and a companion
+  `install-tools.sh` that detects the host OS and installs whatever's
+  missing (Docker, kind, kubectl, Helm, Terraform).
 
 ## Architecture
 
@@ -67,20 +85,46 @@ flowchart TB
 
 ## Approach
 
-The challenge explicitly allows any cloud provider while also requiring the solution to run seamlessly on a local machine, with everything free to use.
+The challenge explicitly allows any cloud provider while also requiring the
+solution to run seamlessly on a local machine, with everything free to use.
 That combination pointed toward one clear choice for the base platform:
-**[kind](https://kind.sigs.k8s.io/)**, Kubernetes running as a set of Docker containers on the local machine. It costs nothing, needs no cloud account or credentials to review, and because the deployment layer is a standard Helm chart with no `kind`-specific assumptions baked in the exact same chart deploys unmodified to a real cluster (EKS, GKE, a self-managed cluster) the moment an image is sitting in a registry it can reach. `kind`
-was the way to satisfy "runs locally" without weakening the "cloud-capable" half of the requirement. That claim is no longer theoretical the same chart has since been deployed unmodified to a real AWS EKS cluster, with only a values override for the load balancer type and image registry (see [Running this on AWS](#running-this-on-aws)).
+**[kind](https://kind.sigs.k8s.io/)**, Kubernetes running as a set of Docker
+containers on the local machine. It costs nothing, needs no cloud account or
+credentials to review, and — because the deployment layer is a standard
+Helm chart with no `kind`-specific assumptions baked in — the exact same
+chart deploys unmodified to a real cluster (EKS, GKE, a self-managed
+cluster) the moment an image is sitting in a registry it can reach. `kind`
+was the way to satisfy "runs locally" without weakening the "cloud-capable"
+half of the requirement. That claim is no longer theoretical - the same
+chart has since been deployed unmodified to a real AWS EKS cluster, with
+only a values override for the load balancer type and image registry (see
+[Running this on AWS](#running-this-on-aws)).
 
 Each other tool was chosen to do exactly one job, and only that job:
 
-- **Docker** builds one image. Nothing about deployment or orchestration  belongs in it.
-- **Helm** describes what "correctly deployed" means resource shape,  security posture, networking — independent of what created the cluster it's deployed into.
-- **Terraform** owns only the cluster's existence, not the application release. Locally, the app image has to be manually loaded into `kind` before anything can run it; asking Terraform's `helm_release` to also  install and wait on the app in the same `apply` creates a race between "cluster exists" and "image is loadable" that Terraform has no clean way  to resolve. Splitting the two — Terraform for the cluster,  a plain `helm upgrade --install` afterward in `scripts/setup.sh` removes  the race entirely and keeps each tool doing the one thing it does best.
+- **Docker** builds one image. Nothing about deployment or orchestration
+  belongs in it.
+- **Helm** describes what "correctly deployed" means — resource shape,
+  security posture, networking — independent of what created the cluster
+  it's deployed into.
+- **Terraform** owns only the cluster's existence, not the application
+  release. Locally, the app image has to be manually loaded into `kind`
+  before anything can run it; asking Terraform's `helm_release` to also
+  install and wait on the app in the same `apply` creates a race between
+  "cluster exists" and "image is loadable" that Terraform has no clean way
+  to resolve. Splitting the two — Terraform for the cluster,
+  a plain `helm upgrade --install` afterward in `scripts/setup.sh` — removes
+  the race entirely and keeps each tool doing the one thing it does best.
 - **GitHub Actions** is where correctness and security get verified
-  automatically, on a machine that starts from nothing every run — not  something left to be checked by hand on a laptop that's already primed with cached layers, installed tools, and leftover state.
+  automatically, on a machine that starts from nothing every run — not
+  something left to be checked by hand on a laptop that's already primed
+  with cached layers, installed tools, and leftover state.
 
-The result is a set of small, single-purpose layers instead of one large tool trying to do everything, which is also why extending this later, a real registry push, a different Kubernetes target, a GitOps controller managing the Helm release instead of a script — is a change to one layer, not a rewrite of the whole thing.
+The result is a set of small, single-purpose layers instead of one large
+tool trying to do everything, which is also why extending this later — a
+real registry push, a different Kubernetes target, a GitOps controller
+managing the Helm release instead of a script — is a change to one layer,
+not a rewrite of the whole thing.
 
 ## NetworkPolicies that exist, and are honest about not doing anything locally
 
@@ -111,6 +155,27 @@ entirely (keeping only a request, so scheduling stays fair) and the probe's
 finish. Alertmanager and the node-exporter were also disabled outright,
 since neither adds anything meaningful to a single-node local demo. The full
 reasoning and values live in `monitoring/values-local.yaml`.
+
+## Quickstart
+
+```bash
+./scripts/install-tools.sh   # installs whatever's missing: docker, kind, kubectl, helm, terraform
+./scripts/setup.sh           # builds the image, provisions kind, deploys the app + monitoring
+```
+
+```bash
+kubectl port-forward svc/crewmeister-app 8080:8080
+curl -s -X POST localhost:8080/user -H 'Content-Type: application/json' -d '{"name":"Ada"}'
+curl -s "localhost:8080/user?id=1"
+
+kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
+# http://localhost:3000, login admin/admin
+```
+
+For a quick app+database loop without touching Kubernetes at all:
+`docker compose up --build`.
+
+Tear down: `cd terraform/kind && terraform destroy`.
 
 ## Running this on AWS
 
@@ -156,6 +221,20 @@ kubectl get svc crewmeister-challenge-app   # EXTERNAL-IP is a real AWS NLB, cou
                                              # service.beta.kubernetes.io/aws-load-balancer-type: nlb
                                              # annotation - without it EKS defaults to a Classic LB
 ```
+
+Captured from the live deployment, before teardown - the app answering
+through the real AWS load balancer, not `kind`'s local network:
+
+```
+$ curl http://a66acceda4a2242439d02ea871e52314-110e745311c4226d.elb.eu-central-1.amazonaws.com:8080/actuator/health
+{"status":"UP","groups":["liveness","readiness"]}
+
+$ curl -X POST http://a66acceda4a2242439d02ea871e52314-110e745311c4226d.elb.eu-central-1.amazonaws.com:8080/user \
+  -H "Content-Type: application/json" -d '{"name":"Mohamed"}'
+Greetings from Crewmeister, Mohamed!
+```
+
+*****You can try it yourself, i will keep the AWS instances running for few weeks!*****
 
 Tear down with `helm uninstall crewmeister-challenge && cd terraform/aws &&
 terraform destroy`. Nothing here shuts itself off on a schedule, so this
@@ -217,28 +296,6 @@ None of this changed the final chart or Terraform structure much. It did
 make clear that "it deploys" and "it deploys correctly the first time" are
 different claims, and that the gap between them is mostly a function of how
 much of AWS's IAM and version-lifecycle surface you've already hit before.
-
-## Quickstart
-
-```bash
-./scripts/install-tools.sh   # installs whatever's missing: docker, kind, kubectl, helm, terraform
-./scripts/setup.sh           # builds the image, provisions kind, deploys the app + monitoring
-```
-
-```bash
-kubectl port-forward svc/crewmeister-app 8080:8080
-curl -s -X POST localhost:8080/user -H 'Content-Type: application/json' -d '{"name":"Ada"}'
-curl -s "localhost:8080/user?id=1"
-
-kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
-# http://localhost:3000, login admin/admin
-```
-
-For a quick app+database loop without touching Kubernetes at all:
-`docker compose up --build`.
-
-Tear down the local stack: `cd terraform/kind && terraform destroy`. For
-the AWS path, see [Running this on AWS](#running-this-on-aws) above.
 
 ## Repository layout
 
