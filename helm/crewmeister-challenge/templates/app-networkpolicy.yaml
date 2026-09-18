@@ -1,6 +1,7 @@
 # restricts app pod traffic. Requires a CNI that enforces NetworkPolicy
 # (Calico, Cilium, most managed cloud CNIs) - kind's default CNI (kindnet)
-# accepts this object but does not enforce it.
+# accepts this object but does not enforce it. eks's default CNI (vpc-cni)
+# has the same gap unless its network policy controller is turned on separately.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

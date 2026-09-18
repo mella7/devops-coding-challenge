@@ -31,3 +31,11 @@ build/
 
 ### VS Code ###
 .vscode/
+
+target/
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+!terraform/**/.terraform.lock.hcl
+crewmeister-challenge-config
+helm/crewmeister-challenge/values-aws.local.yaml

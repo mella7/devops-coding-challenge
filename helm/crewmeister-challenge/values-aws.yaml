@@ -1,0 +1,22 @@
+# overrides for deploying this chart onto eks - used together with the base values.yaml
+# helm install crewmeister-challenge ./helm/crewmeister-challenge -f values-aws.yaml -f values-aws.local.yaml
+
+image:
+  repository: 897427573022.dkr.ecr.eu-central-1.amazonaws.com/crewmeister-challenge
+  tag: latest
+  # switching off "Never" since the image is now pulled from ecr, not built into the kind node
+  pullPolicy: IfNotPresent
+
+service:
+  # gets you a real public endpoint through an aws load balancer
+  type: LoadBalancer
+  # without this annotation eks defaults to a Classic Load Balancer -
+  # this asks for a Network Load Balancer instead, works through the
+  # in-tree aws cloud provider without needing the separate lb controller addon
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+
+# the "dev" default in secret.yaml is fine for kind, not for anything with a public
+# endpoint - put a real value in values-aws.local.yaml (gitignored) instead of here
+# mysql:
+#   rootPassword: set-this-in-values-aws.local.yaml

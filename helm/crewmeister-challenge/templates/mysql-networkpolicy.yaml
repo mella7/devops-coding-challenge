@@ -1,5 +1,5 @@
 # restricts mysql pod traffic to only accept connections from the app pod.
-# Same CNI enforcement caveat as app-networkpolicy.yaml.
+# same CNI enforcement caveat as app-networkpolicy.yaml, on kind and eks both.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
