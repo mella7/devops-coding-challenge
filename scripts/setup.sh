@@ -8,14 +8,15 @@ set -euo pipefail
 
 log() { echo "==> $*"; }
 
+# always run from the repo root, no matter where the script is called from
+cd "$(dirname "$0")/.."
+
 log "Building app image"
 docker build -t crewmeister-challenge:local .
 
 log "Provisioning the kind cluster via Terraform"
-cd terraform/kind
-terraform init -input=false
-terraform apply -auto-approve
-cd ..
+terraform -chdir=terraform/kind init -input=false
+terraform -chdir=terraform/kind apply -auto-approve
 
 log "Loading image into kind (registry-free local workflow)"
 kind load docker-image crewmeister-challenge:local --name crewmeister-challenge
